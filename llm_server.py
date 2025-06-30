@@ -5,8 +5,9 @@ import time
 import numpy as np
 import pandas as pd
 from csv import writer, reader
-from llm_router import route
+from llm_router import knn_router
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from colorama import Fore, Back, Style, init
 
 token = "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"
 API_URL = "https://api-inference.huggingface.co/models/{model_name}/"
@@ -35,30 +36,33 @@ def record_results(query, model_name, logits, mean_logits, token_representation_
 
   # Check if the same query has been answered before 
   df = pd.read_csv("results.csv")
-  matching_row = df[df.loc[:, "query"] == query].iloc[0, :]
+  matching_row = df[df["query"] == query]
   
   # if has not ben answered or we are not as confident in the answer, record
-  #print(f"Token representation length: {matching_row.iloc[:, 6][0]}")
   if matching_row.empty:
     with open("results.csv", "a") as f:
       writer_object = writer(f)
       # if the same query has been answered, record results
       writer_object.writerow([query, model_name, logits[0], logits[1], logits[2], mean_logits, token_representation_length, latency, response])
       f.close()
-  elif np.mean(matching_row['logit_1':'logit_3'].values) < sum(logits)/len(logits) and matching_row['tokenized_length'] >= token_representation_length:
+  elif np.mean(matching_row.iloc[0, :]['logit_1':'logit_3'].values) < sum(logits[:3])/3 and matching_row.iloc[0, :]['tokenized_length'] >= token_representation_length:
     # replace row with updated information
-    print(f"Id of matching row {matching_row.index[0]}")
-    
+    index = matching_row.index[0]
+    df.iloc[index, :] = {"query": query, "model": model_name, "logit_1": logits[0], "logit_2": logits[1], "logit_3": logits[2], "mean_logits": mean_logits, "tokenized_length": token_representation_length, "latency": latency, "response": response}
+    df.to_csv("results.csv", index=False)
 
-def get_response(query):
+def get_response(query, temperature=1.0):
   # get the potential models
   initialize()
-  potential_models = route(query)
-  print(f"potential models: {potential_models}")
+  potential_models = knn_router(query, k=5, n=20)
+  print(f"Potential models: {potential_models} \n")
+
+  # start measuring latency of generation process
+  start = time.time()
 
   # if multiple potential models, generate answers with all of them and record the best one 
   for model_name in potential_models:
-    print(f"Chose model {model_name}")
+    print(f"Chose model {model_name} \n")
     
     # Get pretrained model
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -79,7 +83,7 @@ def get_response(query):
 
     # Convert token IDs to token strings
     token_strings = [tokenizer.decode([token_id]) for token_id in input_ids]
-    print("Tokens as plain text:", token_strings)
+    print(Fore.CYAN + f"Tokens as plain text: {token_strings} \n" + Style.RESET_ALL)
 
     # Max number of tokens to generate
     max_new_tokens = 100
@@ -87,12 +91,11 @@ def get_response(query):
     generated_ids = inputs["input_ids"]
     logits_history = []
 
-    # start measuring latency of generation process
-    start = time.time()
     for _ in range(max_new_tokens):
       with torch.no_grad():
         outputs = model(input_ids=generated_ids)
         logits = outputs.logits
+        logits /= temperature
 
       # Get the logits for the next token (last position)
       next_token_logits = logits[:, -1, :]  # shape: (batch_size, vocab_size)
@@ -108,21 +111,21 @@ def get_response(query):
       # Append next token to input for next step
       generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
 
-    end = time.time()
-    latency = (end - start) * 1000
-
     # Print information about logits
-    print(f"Logits of chosen tokens: {logits_history}")
+    print(Fore.CYAN + Style.BRIGHT + f"Logits of chosen tokens: {logits_history} \n" + Style.RESET_ALL)
     mean_logits = sum(logits_history) / len(logits_history)
-    print(f"Mean of logits: {mean_logits}")
+    print(f"Mean of logits: {mean_logits} \n")
 
     # Decode chosen sequence
     response_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    print(f"Response by {model_name}: {response_text}")
+    print(Fore.BLUE + Style.BRIGHT + f"Response by {model_name}: {response_text} \n" + Style.RESET_ALL)
 
+    # stop measuring latency of generation process
+    end = time.time()
+    latency = (end - start) * 1000
     # write results 
     record_results(query, model_name, logits_history, mean_logits, len(input_ids), response_text, latency)
-
+    
   df = pd.read_csv("results.csv")
   response = df[df.loc[:, "query"] == query]["response"].values[0]
   return response

@@ -1,8 +1,8 @@
 from sentence_transformers import SentenceTransformer
 
-def get_similarity_scores(prev_queries, curr_query):
-  model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
+def get_similarity_scores(prev_queries, curr_query):
   # append the current query and compute results
   prev_queries.append(curr_query)
 
@@ -13,3 +13,6 @@ def get_similarity_scores(prev_queries, curr_query):
   last_column = similarities[:, -1].tolist()
 
   return last_column
+
+def get_embedding(sentence):
+  return model.encode(sentence)
