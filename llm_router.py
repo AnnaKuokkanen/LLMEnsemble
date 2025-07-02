@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
+import torch
 import os.path
-from services.semantic_service import get_similarity_scores
+from services.semantic_service import get_similarity_scores, get_sentence_similarity
 from services.data_service import get_training_data
 import random
 from colorama import Fore, Back, Style, init
@@ -22,49 +23,64 @@ available_models = [math_model, code_model, small_model]
 def train_knn(n):
   df = get_training_data(n)
 
-  # initialize empty array for storing best model for each query
-  optimal_models = np.empty([df.shape[0], 1])
+  # add placeholder columns for model name and similarity score
+  optimal_models = pd.DataFrame(np.empty((df.shape[0], 1)))
+  similarity_scores = pd.DataFrame(np.full((df.shape[0], 1), -999999))
+
+  df = pd.concat([df, optimal_models, similarity_scores], axis=1, ignore_index=True).rename(columns={0: "input", 1: "output", 2: "model_name", 3: "similarity_score"})
 
   # for query in df, feed to available models and see which answer is the most semantically similar one to the output
-  for i, query in enumerate(df.loc[:, "input"]):
-    print(Fore.MAGENTA + f"Completed training {i+1} / {df.shape[0]} queries" + Style.RESET_ALL)
-    similarity_scores = []
+  for model_name in available_models:
+    print(Fore.MAGENTA + f"Next testing model {model_name}" + Style.RESET_ALL)
 
-    for model_name in available_models:
-      # do inference with chosen model and the given query
-      tokenizer = AutoTokenizer.from_pretrained(model_name)
-      model = AutoModelForCausalLM.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
 
-      model.eval()
+    if tokenizer.eos_token_id is None:
+      tokenizer.eos_token = ""
+    eos_token_id = tokenizer.eos_token_id
 
+    model.eval()
+
+    # do inference with chosen model for each query
+    for i, query in enumerate(df.loc[:, "input"]):
       input_ids = tokenizer.encode(query, return_tensors="pt")
       with torch.no_grad():
         output_ids = model.generate(
             input_ids,
-            max_length=100,
+            #max_length=100,
             num_return_sequences=1,
             do_sample=True,  # Enable sampling for more creative results
             #temperature=0.8,  # Controls randomness
-            top_k=50,         # Optional: limit sampling to top-k tokens
+            #top_k=50,         # Optional: limit sampling to top-k tokens
             #top_p=0.95        # Optional: nucleus sampling
         )
 
       generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-      similarity_scores.append(get_similarity_scores(generated_text, df.loc[:, "output"]))
-    
-    # choose the model that outputs the highest similarity score
-    optimal_model = available_models[np.argmax(np.array(similarity_scores), axis=None)]
-    optimal_models[i] = optimal_model
 
-  # append optimal models into the data frame and write to csv
-  df = pd.concat([df, optimal_models], axis=1, ignore_index=True)
+      # get similarity score between generated text and ground truth
+      similarity_score = get_sentence_similarity(generated_text, df.loc[i, "output"])
+      print(similarity_score)
+      print(df.loc[i, "similarity_score"])
+
+      # if similarity score is better, update current model to
+      if similarity_score > df.loc[i, "similarity_score"]:
+        df.loc[i, "model_name"] = model_name
+        df.loc[i, "similarity_score"] = similarity_score
+
+      print(f"Completed training {i+1} / {df.shape[0]} queries")
+
+    # delete model from memory
+    del model
+
+  # write results to csv
   df.to_csv("knn_results.csv", index=False)
 
 
 # routing strategy based on non-trained router
 def knn_router(query, k=1, n=10):
   if not os.path.isfile("knn_results.csv"):
-    # if results file does not exist, train the router
+    # if results file does not exist, train the router to obtain n data points
     train_knn(n)
 
   # read previous results

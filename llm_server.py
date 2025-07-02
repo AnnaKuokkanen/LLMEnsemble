@@ -54,7 +54,7 @@ def record_results(query, model_name, logits, mean_logits, token_representation_
 def get_response(query, temperature=1.0):
   # get the potential models
   initialize()
-  potential_models = knn_router(query, k=5, n=20)
+  potential_models = knn_router(query, k=3, n=10)
   print(f"Potential models: {potential_models} \n")
 
   # start measuring latency of generation process

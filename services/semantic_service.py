@@ -14,5 +14,13 @@ def get_similarity_scores(prev_queries, curr_query):
 
   return last_column
 
+def get_sentence_similarity(sentence_1, sentence_2):
+  embedding_1 = model.encode(sentence_1)
+  embedding_2 = model.encode(sentence_2)
+
+  similarity = model.similarity(embedding_1, embedding_2)
+
+  return similarity.item()
+
 def get_embedding(sentence):
   return model.encode(sentence)
