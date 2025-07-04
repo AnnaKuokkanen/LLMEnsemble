@@ -1,10 +1,10 @@
 import pandas as pd
 import numpy as np
 import torch
-import os.path
-from services.semantic_service import get_similarity_scores, get_sentence_similarity
-from services.data_service import get_training_data
 import random
+import os.path
+from services.semantic_service import get_similarity_scores, find_k_nearest_neighbors
+from services.data_service import get_training_data
 from colorama import Fore, Back, Style, init
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -79,39 +79,34 @@ def train_knn(n):
 
 # routing strategy based on non-trained router
 def knn_router(query, k=1, n=10):
-  if not os.path.isfile("knn_results.csv"):
+  if not os.path.isfile("data/knn_results.csv"):
     # if results file does not exist, train the router to obtain n data points
     train_knn(n)
 
   # read previous results
-  df = pd.read_csv("knn_results.csv")
+  df = pd.read_csv("data/knn_results.csv")
 
-  # check if query has already been answered, route to the same model if so 
-  matching_row = df[df.loc[:, "query"] == query]
+  # next we need to find k nearest neighbors in the embedding space in the training examples
+  # TODO find a way to store the embeddings, they only need to be calculated once, not on every inference run
+  corpus = df.loc[:, "input"].values.tolist()
 
-  if not matching_row.empty:
-    return matching_row["model"].values
+  # this is a list of row ids with the semantically nearest queries
+  knn_results = find_k_nearest_neighbors(query, corpus, k)
+  row_ids = [entry["corpus_id"] for entry in knn_results[0]]
+  print(knn_results)
 
-  # list of previous queries to compute semantic similarities against
-  prev_queries = df.loc[:, "query"].to_list()
-  sem_similarities = get_similarity_scores(prev_queries, query)
-  print(Fore.MAGENTA + f"Semantic similarities found: {sem_similarities} \n" + Style.RESET_ALL)
+  # see what is the most frequent model in the nearest neighbors and choose that (majority vote for now)
+  model_candidates = df.loc[row_ids, "model_name"]
+  print(Fore.RED + f"Model candidates: {model_candidates.to_list()}" + Style.RESET_ALL)
 
-  # find ids of rows with high enough semantic similarity (> 0.7) and return the models 
-  model_ids = [i for i in range(len(sem_similarities) - 1) if sem_similarities[i] > 0.7]
+  # majority vote
+  best_model = max(set(model_candidates), key=model_candidates.count)
+  return best_model
 
-  if len(model_ids) == 0:
-    return available_models
+# random router for benchmarking purposes
+def random_router(query):
+  return random.choice(available_models)
 
-  # get the models with the confidence scores and return them as possible candidates
-  models = df.loc[model_ids, "model"].to_list()
-
-  # backup is queried via API
-  """ local = True 
-    if model == backup_model:
-      local = False """
-  
-  return models
 
 # routing strategy based on trained model router
 def model_router(query, router_model):
@@ -120,7 +115,3 @@ def model_router(query, router_model):
   # if model does not exist, output
   if router_model == None:
     print("Please provide a trained router model")
-
-# random router for benchmarking purposes
-def random_router(query):
-  return random.choice(available_models)

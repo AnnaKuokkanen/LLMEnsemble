@@ -125,6 +125,9 @@ def get_response(query, temperature=1.0):
     latency = (end - start) * 1000
     # write results 
     record_results(query, model_name, logits_history, mean_logits, len(input_ids), response_text, latency)
+
+    # delete model from memory
+    del model
     
   df = pd.read_csv("results.csv")
   response = df[df.loc[:, "query"] == query]["response"].values[0]
