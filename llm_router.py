@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import random
 import os.path
-from services.semantic_service import get_similarity_scores, find_k_nearest_neighbors
+from services.semantic_service import get_similarity_scores, find_k_nearest_neighbors, get_sentence_similarity
 from services.data_service import get_training_data
 from colorama import Fore, Back, Style, init
 from transformers import AutoModelForCausalLM, AutoTokenizer
